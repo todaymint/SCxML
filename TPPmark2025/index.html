@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TPPmark 2025 Puzzle Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; color: #fff; font-family: sans-serif; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #controls {
+            pointer-events: auto;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            display: inline-block;
+            max-width: 600px;
+        }
+        button {
+            background: #444;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 2px;
+        }
+        button:hover { background: #666; }
+        #helpContent {
+            display: none;
+            text-align: left;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+        }
+        #message {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #4f4;
+            min-height: 20px;
+        }
+        a { color: #88f; }
+    </style>
+    <!-- ローカルの Three.js ライブラリを読み込み -->
+    <script src="js/three.min.js"></script>
+    <script src="js/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="info">
+        <div id="controls">
+            <h2>TPPmark 2025 Puzzle</h2>
+            
+            <div>
+                <button id="helpBtn">❓ 操作方法</button>
+                <label for="size" style="margin-left: 10px;">サイズ (N): </label>
+                <input type="number" id="size" value="3" min="1" max="10" style="width: 40px;">
+                <button id="resetBtn">リセット (全OFF)</button>
+                <button id="scrambleBtn">スクランブル</button>
+                <label style="margin-left: 10px;"><input type="checkbox" id="editMode"> 編集モード</label>
+            </div>
+
+            <div id="helpContent">
+                <h3>遊び方</h3>
+                <p>全てのランプ（球体）を<strong>OFF（暗い状態）</strong>にするとクリアです。</p>
+                <ul>
+                    <li><strong>クリック (外面の枠):</strong> その面を垂直に貫通する列のランプを反転（ON/OFF）させます。</li>
+                    <li><strong>ドラッグ:</strong> キューブを回転させて視点を変更します。</li>
+                    <li><strong>ホイール:</strong> ズームイン・アウト。</li>
+                </ul>
+                <p><strong>編集モード:</strong> チェックを入れると、ランプを直接クリックして個別にON/OFFできます（問題作成用）。</p>
+            </div>
+
+            <div id="message"></div>
+        </div>
+    </div>
+
+    <script>
+        // ゲームの状態
+        let N = 3;
+        let isEditMode = false;
+        let lamps = []; // 3D配列: lamps[x][y][z] = { state: 0/1, mesh: THREE.Mesh }
+        let scene, camera, renderer, controls;
+        let raycaster, mouse;
+        
+        // 初期化
+        function init() {
+            // シーン
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+
+            // カメラ
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(N * 2, N * 2, N * 3);
+
+            // レンダラー
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // コントロール
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // ライト
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(10, 20, 10);
+            scene.add(directionalLight);
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(-10, -10, -10);
+            scene.add(backLight);
+
+            // レイキャスター
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // イベントリスナー
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('pointerdown', onPointerDown);
+            
+            document.getElementById('helpBtn').addEventListener('click', () => {
+                const help = document.getElementById('helpContent');
+                help.style.display = help.style.display === 'none' ? 'block' : 'none';
+            });
+
+            document.getElementById('resetBtn').addEventListener('click', () => createPuzzle(false));
+            document.getElementById('scrambleBtn').addEventListener('click', () => createPuzzle(true));
+            document.getElementById('editMode').addEventListener('change', (e) => {
+                isEditMode = e.target.checked;
+                document.getElementById('message').textContent = isEditMode ? "編集モード: ランプをクリックしてON/OFFを切り替えてください。" : "";
+            });
+            document.getElementById('size').addEventListener('change', (e) => {
+                let val = parseInt(e.target.value);
+                if (val >= 1 && val <= 10) {
+                    N = val;
+                    createPuzzle(false);
+                }
+            });
+
+            // パズル作成
+            createPuzzle(true);
+
+            // アニメーションループ
+            animate();
+        }
+
+        function createPuzzle(scramble = false) {
+            // 既存のオブジェクトを削除
+            while(scene.children.length > 0){ 
+                scene.remove(scene.children[0]); 
+            }
+            // ライトを再追加
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(10, 20, 10);
+            scene.add(directionalLight);
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(-10, -10, -10);
+            scene.add(backLight);
+
+            lamps = [];
+            const offset = (N - 1) / 2;
+
+            // グループを作成して中心に配置
+            const group = new THREE.Group();
+            scene.add(group);
+
+            for (let x = 0; x < N; x++) {
+                lamps[x] = [];
+                for (let y = 0; y < N; y++) {
+                    lamps[x][y] = [];
+                    for (let z = 0; z < N; z++) {
+                        // ランプの状態 (0: OFF, 1: ON)
+                        // スクランブルの場合はランダム、そうでなければOFF
+                        const initialState = 0; 
+                        
+                        // 球体（ランプ）
+                        const geometry = new THREE.SphereGeometry(0.25, 32, 32);
+                        const material = new THREE.MeshPhongMaterial({ 
+                            color: 0x333333,
+                            emissive: 0x000000,
+                            shininess: 100
+                        });
+                        const sphere = new THREE.Mesh(geometry, material);
+                        sphere.position.set(x - offset, y - offset, z - offset);
+                        
+                        // ユーザーデータに座標を保存
+                        sphere.userData = { x, y, z, type: 'lamp' };
+                        
+                        group.add(sphere);
+
+                        // フレーム（枠線）
+                        // 外側のセルだけでなく、全てのセルに枠線を描画して構造を分かりやすくする
+                        // ただし、ユーザーの要望は「ルービックキューブのフレームだけ描いて」なので、
+                        // 立方体のワイヤーフレームを表示する。
+                        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+                        const edges = new THREE.EdgesGeometry(boxGeo);
+                        const lineMat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 });
+                        const wireframe = new THREE.LineSegments(edges, lineMat);
+                        wireframe.position.copy(sphere.position);
+                        
+                        // クリック判定用の透明なボックス（当たり判定用）
+                        // 外面にあるセルのみクリック可能にするため、当たり判定用メッシュを用意
+                        const hitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+                        const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false }); // 不可視
+                        const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+                        hitBox.position.copy(sphere.position);
+                        hitBox.userData = { x, y, z, type: 'hitbox' };
+
+                        group.add(wireframe);
+                        group.add(hitBox);
+
+                        lamps[x][y][z] = {
+                            state: initialState,
+                            mesh: sphere,
+                            hitBox: hitBox
+                        };
+                        
+                        updateLampVisual(x, y, z);
+                    }
+                }
+            }
+
+            // カメラ位置調整
+            camera.position.set(N * 1.5, N * 1.5, N * 2);
+            controls.target.set(0, 0, 0);
+            controls.update();
+
+            if (scramble) {
+                scramblePuzzle();
+            }
+            checkWin();
+        }
+
+        function updateLampVisual(x, y, z) {
+            const lamp = lamps[x][y][z];
+            if (lamp.state === 1) {
+                // ON: 黄色く光る
+                lamp.mesh.material.color.setHex(0xffff00);
+                lamp.mesh.material.emissive.setHex(0xaa8800);
+                lamp.mesh.scale.set(1, 1, 1); // 通常サイズ
+            } else {
+                // OFF: 暗い色、少し小さくして邪魔にならないようにする
+                lamp.mesh.material.color.setHex(0x222222);
+                lamp.mesh.material.emissive.setHex(0x000000);
+                lamp.mesh.scale.set(0.5, 0.5, 0.5); // 小さくする
+            }
+        }
+
+        function toggleLine(startX, startY, startZ, normal) {
+            // 法線ベクトルに基づいて貫通するラインを決定
+            // normal は Vector3
+            
+            // 軸を特定 (x, y, z のうち絶対値が最大のものが軸)
+            const absX = Math.abs(normal.x);
+            const absY = Math.abs(normal.y);
+            const absZ = Math.abs(normal.z);
+
+            let dx = 0, dy = 0, dz = 0;
+
+            if (absX > absY && absX > absZ) {
+                // X軸方向の貫通 -> YとZが固定、Xが変化
+                for (let i = 0; i < N; i++) {
+                    toggleLamp(i, startY, startZ);
+                }
+            } else if (absY > absX && absY > absZ) {
+                // Y軸方向の貫通 -> XとZが固定、Yが変化
+                for (let i = 0; i < N; i++) {
+                    toggleLamp(startX, i, startZ);
+                }
+            } else {
+                // Z軸方向の貫通 -> XとYが固定、Zが変化
+                for (let i = 0; i < N; i++) {
+                    toggleLamp(startX, startY, i);
+                }
+            }
+            checkWin();
+        }
+
+        function toggleLamp(x, y, z) {
+            if (x >= 0 && x < N && y >= 0 && y < N && z >= 0 && z < N) {
+                lamps[x][y][z].state = 1 - lamps[x][y][z].state;
+                updateLampVisual(x, y, z);
+            }
+        }
+
+        function scramblePuzzle() {
+            // ランダムに外面をクリックするシミュレーションを繰り返す
+            // これにより「解ける」状態が保証される（全てOFFから操作した結果なので、逆操作で戻せる）
+            const moves = N * N * 5;
+            for (let i = 0; i < moves; i++) {
+                // ランダムな軸と座標を選択
+                const axis = Math.floor(Math.random() * 3);
+                const a = Math.floor(Math.random() * N);
+                const b = Math.floor(Math.random() * N);
+                
+                if (axis === 0) { // X軸方向
+                    for(let x=0; x<N; x++) toggleLamp(x, a, b);
+                } else if (axis === 1) { // Y軸方向
+                    for(let y=0; y<N; y++) toggleLamp(a, y, b);
+                } else { // Z軸方向
+                    for(let z=0; z<N; z++) toggleLamp(a, b, z);
+                }
+            }
+            document.getElementById('message').textContent = "スクランブルしました。";
+        }
+
+        function checkWin() {
+            let allOff = true;
+            for (let x = 0; x < N; x++) {
+                for (let y = 0; y < N; y++) {
+                    for (let z = 0; z < N; z++) {
+                        if (lamps[x][y][z].state === 1) {
+                            allOff = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (allOff) {
+                document.getElementById('message').textContent = "クリア！全てのランプがOFFになりました！";
+            } else {
+                document.getElementById('message').textContent = "";
+            }
+        }
+
+        function onPointerDown(event) {
+            // UI上のクリックは無視
+            if (event.target.closest('#info')) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            if (isEditMode) {
+                // 編集モード: 球体(lamp)との交差判定を行い、個別にON/OFF
+                const intersects = raycaster.intersectObjects(scene.children, true);
+                for (let i = 0; i < intersects.length; i++) {
+                    const obj = intersects[i].object;
+                    // 球体をクリックした場合
+                    if (obj.userData && obj.userData.type === 'lamp') {
+                        const { x, y, z } = obj.userData;
+                        toggleLamp(x, y, z);
+                        checkWin(); 
+                        return;
+                    }
+                }
+            } else {
+                // 通常モード: HitBoxとの交差判定
+                const intersects = raycaster.intersectObjects(scene.children, true);
+
+                for (let i = 0; i < intersects.length; i++) {
+                    const obj = intersects[i].object;
+                    if (obj.userData && obj.userData.type === 'hitbox') {
+                        const { x, y, z } = obj.userData;
+                        
+                        // 外面かどうかチェック
+                        const isOuter = (x === 0 || x === N - 1 || y === 0 || y === N - 1 || z === 0 || z === N - 1);
+                        
+                        if (isOuter) {
+                            // クリックされた面の法線を取得して、貫通方向を決定
+                            const normal = intersects[i].face.normal;
+                            
+                            // 操作実行
+                            toggleLine(x, y, z, normal);
+                            return; // 1回クリックしたら終了
+                        }
+                    }
+                }
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
