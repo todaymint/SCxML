@@ -20,7 +20,7 @@
             padding: 10px;
             border-radius: 5px;
             display: inline-block;
-            max-width: 600px;
+            max-width: 95%;
         }
         button {
             background: #444;
@@ -58,13 +58,13 @@
         <div id="controls">
             <h2>TPPmark 2025 Puzzle</h2>
             
-            <div>
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px;">
                 <button id="helpBtn">❓ 操作方法</button>
-                <label for="size" style="margin-left: 10px;">サイズ (N): </label>
+                <label for="size">サイズ (N): </label>
                 <input type="number" id="size" value="3" min="1" max="10" style="width: 40px;">
                 <button id="resetBtn">リセット (全OFF)</button>
                 <button id="scrambleBtn">スクランブル</button>
-                <label style="margin-left: 10px;"><input type="checkbox" id="editMode"> 編集モード</label>
+                <label><input type="checkbox" id="editMode"> 編集モード</label>
             </div>
 
             <div id="helpContent">
@@ -76,6 +76,7 @@
                     <li><strong>ホイール:</strong> ズームイン・アウト。</li>
                 </ul>
                 <p><strong>編集モード:</strong> チェックを入れると、ランプを直接クリックして個別にON/OFFできます（問題作成用）。</p>
+                <p>出題: <a href="https://tpp2025.blogspot.com/2025/09/tppmark-2025.html" target="_blank"> https://tpp2025.blogspot.com/2025/09/tppmark-2025.html</a></p>
             </div>
 
             <div id="message"></div>
